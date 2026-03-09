@@ -276,5 +276,49 @@
             </template>
         </a-setting-list-item>
     </a-collapse-panel>
+    <a-collapse-panel key="7" header='{{ i18n "pages.settings.trafficMultiplier" }}'>
+        <a-setting-list-item paddings="small">
+            <template #title>{{ i18n "pages.settings.trafficMultiplierEnable" }}</template>
+            <template #description>{{ i18n "pages.settings.trafficMultiplierEnableDesc" }}</template>
+            <template #control>
+                <a-switch v-model="allSetting.trafficMultiplierEnable"></a-switch>
+            </template>
+        </a-setting-list-item>
+        <template v-if="allSetting.trafficMultiplierEnable">
+            <a-setting-list-item paddings="small">
+                <template #title>{{ i18n "pages.settings.trafficMultiplierValue" }}</template>
+                <template #description>{{ i18n "pages.settings.trafficMultiplierValueDesc" }}</template>
+                <template #control>
+                    <a-input-number :min="2" :max="1000" v-model="allSetting.trafficMultiplierValue" :style="{ width: '100%' }"></a-input-number>
+                </template>
+            </a-setting-list-item>
+            <a-setting-list-item paddings="small">
+                <template #title>{{ i18n "pages.settings.trafficMultiplierInboundTags" }}</template>
+                <template #description>{{ i18n "pages.settings.trafficMultiplierInboundTagsDesc" }}</template>
+                <template #control>
+                    <a-select mode="multiple" :dropdown-class-name="themeSwitcher.currentTheme" :style="{ width: '100%' }" v-model="multiplierInboundTagList">
+                        <a-select-option v-for="opt in inboundOptions" :key="opt.value" :value="opt.value">[[ opt.label ]]</a-select-option>
+                    </a-select>
+                    <div v-if="inboundOptions.length==0" style="margin-top:6px;color:#999">No inbounds found.</div>
+                </template>
+            </a-setting-list-item>
+        </template>
+    </a-collapse-panel>
+    <a-collapse-panel key="8" header='{{ i18n "pages.settings.bulkExtend" }}'>
+        <a-setting-list-item paddings="small">
+            <template #title>{{ i18n "pages.settings.bulkExtendDays" }}</template>
+            <template #description>{{ i18n "pages.settings.bulkExtendDaysDesc" }}</template>
+            <template #control>
+                <a-input-number :min="1" :max="3650" v-model="bulkExtendDays" :style="{ width: '100%' }"></a-input-number>
+            </template>
+        </a-setting-list-item>
+        <a-setting-list-item paddings="small">
+            <template #title>{{ i18n "pages.settings.bulkExtendAction" }}</template>
+            <template #description>{{ i18n "pages.settings.bulkExtendActionDesc" }}</template>
+            <template #control>
+                <a-button type="primary" @click="bulkExtendExpiry">{{ i18n "pages.settings.bulkExtendBtn" }}</a-button>
+            </template>
+        </a-setting-list-item>
+    </a-collapse-panel>
 </a-collapse>
 {{end}}

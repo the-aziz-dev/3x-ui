@@ -102,6 +102,11 @@ var defaultValueMap = map[string]string{
 	"ldapDefaultTotalGB":    "0",
 	"ldapDefaultExpiryDays": "0",
 	"ldapDefaultLimitIP":    "0",
+
+	// Traffic multiplier defaults
+	"trafficMultiplierEnable":      "false",
+	"trafficMultiplierValue":       "1",
+	"trafficMultiplierInboundTags": "",
 }
 
 // SettingService provides business logic for application settings management.
@@ -686,6 +691,18 @@ func (s *SettingService) GetLdapDefaultExpiryDays() (int, error) {
 
 func (s *SettingService) GetLdapDefaultLimitIP() (int, error) {
 	return s.getInt("ldapDefaultLimitIP")
+}
+
+func (s *SettingService) GetTrafficMultiplierEnable() (bool, error) {
+	return s.getBool("trafficMultiplierEnable")
+}
+
+func (s *SettingService) GetTrafficMultiplierValue() (int, error) {
+	return s.getInt("trafficMultiplierValue")
+}
+
+func (s *SettingService) GetTrafficMultiplierInboundTags() (string, error) {
+	return s.getString("trafficMultiplierInboundTags")
 }
 
 func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {

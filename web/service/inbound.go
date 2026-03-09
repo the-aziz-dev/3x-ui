@@ -23,7 +23,8 @@ import (
 // It handles CRUD operations for inbounds, client management, traffic monitoring,
 // and integration with the Xray API for real-time updates.
 type InboundService struct {
-	xrayApi xray.XrayAPI
+	xrayApi        xray.XrayAPI
+	settingService SettingService
 }
 
 // GetInbounds retrieves all inbounds for a specific user.
@@ -939,6 +940,32 @@ func (s *InboundService) UpdateInboundClient(data *model.Inbound, clientId strin
 	return needRestart, tx.Save(oldInbound).Error
 }
 
+func (s *InboundService) getTrafficMultiplierConfig() (bool, int64, map[string]bool) {
+	enabled, err := s.settingService.GetTrafficMultiplierEnable()
+	if err != nil || !enabled {
+		return false, 1, nil
+	}
+	value, err := s.settingService.GetTrafficMultiplierValue()
+	if err != nil || value <= 1 {
+		return false, 1, nil
+	}
+	tagsStr, err := s.settingService.GetTrafficMultiplierInboundTags()
+	if err != nil || tagsStr == "" {
+		return false, 1, nil
+	}
+	tagSet := make(map[string]bool)
+	for _, tag := range strings.Split(tagsStr, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag != "" {
+			tagSet[tag] = true
+		}
+	}
+	if len(tagSet) == 0 {
+		return false, 1, nil
+	}
+	return true, int64(value), tagSet
+}
+
 func (s *InboundService) AddTraffic(inboundTraffics []*xray.Traffic, clientTraffics []*xray.ClientTraffic) (error, bool) {
 	var err error
 	db := database.GetDB()
@@ -951,11 +978,15 @@ func (s *InboundService) AddTraffic(inboundTraffics []*xray.Traffic, clientTraff
 			tx.Commit()
 		}
 	}()
-	err = s.addInboundTraffic(tx, inboundTraffics)
+
+	// Load traffic multiplier configuration once
+	multiplierEnabled, multiplierValue, multiplierTags := s.getTrafficMultiplierConfig()
+
+	err = s.addInboundTraffic(tx, inboundTraffics, multiplierEnabled, multiplierValue, multiplierTags)
 	if err != nil {
 		return err, false
 	}
-	err = s.addClientTraffic(tx, clientTraffics)
+	err = s.addClientTraffic(tx, clientTraffics, multiplierEnabled, multiplierValue, multiplierTags)
 	if err != nil {
 		return err, false
 	}
@@ -983,7 +1014,7 @@ func (s *InboundService) AddTraffic(inboundTraffics []*xray.Traffic, clientTraff
 	return nil, (needRestart0 || needRestart1 || needRestart2)
 }
 
-func (s *InboundService) addInboundTraffic(tx *gorm.DB, traffics []*xray.Traffic) error {
+func (s *InboundService) addInboundTraffic(tx *gorm.DB, traffics []*xray.Traffic, multiplierEnabled bool, multiplierValue int64, multiplierTags map[string]bool) error {
 	if len(traffics) == 0 {
 		return nil
 	}
@@ -992,11 +1023,18 @@ func (s *InboundService) addInboundTraffic(tx *gorm.DB, traffics []*xray.Traffic
 
 	for _, traffic := range traffics {
 		if traffic.IsInbound {
+			up := traffic.Up
+			down := traffic.Down
+			// Apply traffic multiplier if enabled and this inbound tag is selected
+			if multiplierEnabled && multiplierTags[traffic.Tag] {
+				up *= multiplierValue
+				down *= multiplierValue
+			}
 			err = tx.Model(&model.Inbound{}).Where("tag = ?", traffic.Tag).
 				Updates(map[string]any{
-					"up":       gorm.Expr("up + ?", traffic.Up),
-					"down":     gorm.Expr("down + ?", traffic.Down),
-					"all_time": gorm.Expr("COALESCE(all_time, 0) + ?", traffic.Up+traffic.Down),
+					"up":       gorm.Expr("up + ?", up),
+					"down":     gorm.Expr("down + ?", down),
+					"all_time": gorm.Expr("COALESCE(all_time, 0) + ?", up+down),
 				}).Error
 			if err != nil {
 				return err
@@ -1006,7 +1044,7 @@ func (s *InboundService) addInboundTraffic(tx *gorm.DB, traffics []*xray.Traffic
 	return nil
 }
 
-func (s *InboundService) addClientTraffic(tx *gorm.DB, traffics []*xray.ClientTraffic) (err error) {
+func (s *InboundService) addClientTraffic(tx *gorm.DB, traffics []*xray.ClientTraffic, multiplierEnabled bool, multiplierValue int64, multiplierTags map[string]bool) (err error) {
 	if len(traffics) == 0 {
 		// Empty onlineUsers
 		if p != nil {
@@ -1032,6 +1070,23 @@ func (s *InboundService) addClientTraffic(tx *gorm.DB, traffics []*xray.ClientTr
 		return nil
 	}
 
+	// Build inboundId -> tag map for multiplier lookup if multiplier is enabled
+	var inboundTagMap map[int]string
+	if multiplierEnabled {
+		inboundIds := make([]int, 0, len(dbClientTraffics))
+		for _, ct := range dbClientTraffics {
+			inboundIds = append(inboundIds, ct.InboundId)
+		}
+		var inbounds []model.Inbound
+		if err = tx.Model(model.Inbound{}).Select("id, tag").Where("id IN (?)", inboundIds).Find(&inbounds).Error; err != nil {
+			return err
+		}
+		inboundTagMap = make(map[int]string, len(inbounds))
+		for _, ib := range inbounds {
+			inboundTagMap[ib.Id] = ib.Tag
+		}
+	}
+
 	dbClientTraffics, err = s.adjustTraffics(tx, dbClientTraffics)
 	if err != nil {
 		return err
@@ -1040,9 +1095,21 @@ func (s *InboundService) addClientTraffic(tx *gorm.DB, traffics []*xray.ClientTr
 	for dbTraffic_index := range dbClientTraffics {
 		for traffic_index := range traffics {
 			if dbClientTraffics[dbTraffic_index].Email == traffics[traffic_index].Email {
-				dbClientTraffics[dbTraffic_index].Up += traffics[traffic_index].Up
-				dbClientTraffics[dbTraffic_index].Down += traffics[traffic_index].Down
-				dbClientTraffics[dbTraffic_index].AllTime += (traffics[traffic_index].Up + traffics[traffic_index].Down)
+				up := traffics[traffic_index].Up
+				down := traffics[traffic_index].Down
+
+				// Apply traffic multiplier if enabled and this client's inbound is selected
+				if multiplierEnabled {
+					tag := inboundTagMap[dbClientTraffics[dbTraffic_index].InboundId]
+					if multiplierTags[tag] {
+						up *= multiplierValue
+						down *= multiplierValue
+					}
+				}
+
+				dbClientTraffics[dbTraffic_index].Up += up
+				dbClientTraffics[dbTraffic_index].Down += down
+				dbClientTraffics[dbTraffic_index].AllTime += (up + down)
 
 				// Add user in onlineUsers array on traffic
 				if traffics[traffic_index].Up+traffics[traffic_index].Down > 0 {
@@ -2507,4 +2574,79 @@ func (s *InboundService) DelInboundClientByEmail(inboundId int, email string) (b
 	}
 
 	return needRestart, db.Save(oldInbound).Error
+}
+
+func (s *InboundService) BulkExtendClientExpiry(days int) (int64, error) {
+	if days <= 0 {
+		return 0, common.NewError("days must be > 0")
+	}
+	db := database.GetDB()
+	tx := db.Begin()
+	var err error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	addMs := int64(days) * 86400000
+
+	// 1. Update client_traffics: add days to all clients with positive expiry_time
+	result := tx.Model(xray.ClientTraffic{}).
+		Where("expiry_time > 0").
+		Update("expiry_time", gorm.Expr("expiry_time + ?", addMs))
+	if result.Error != nil {
+		err = result.Error
+		return 0, err
+	}
+	affected := result.RowsAffected
+
+	// 2. Update expiryTime inside inbound settings JSON for all affected clients
+	var inbounds []*model.Inbound
+	err = tx.Model(model.Inbound{}).Find(&inbounds).Error
+	if err != nil {
+		return 0, err
+	}
+
+	for i := range inbounds {
+		var settings map[string]any
+		if jsonErr := json.Unmarshal([]byte(inbounds[i].Settings), &settings); jsonErr != nil {
+			continue
+		}
+		clients, ok := settings["clients"].([]any)
+		if !ok {
+			continue
+		}
+		modified := false
+		for ci := range clients {
+			c, ok := clients[ci].(map[string]any)
+			if !ok {
+				continue
+			}
+			expiry, ok := c["expiryTime"].(float64)
+			if !ok || expiry <= 0 {
+				continue
+			}
+			c["expiryTime"] = expiry + float64(addMs)
+			c["updated_at"] = float64(time.Now().Unix() * 1000)
+			clients[ci] = c
+			modified = true
+		}
+		if modified {
+			settings["clients"] = clients
+			newSettings, jsonErr := json.MarshalIndent(settings, "", "  ")
+			if jsonErr != nil {
+				continue
+			}
+			inbounds[i].Settings = string(newSettings)
+		}
+	}
+	err = tx.Save(inbounds).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return affected, nil
 }

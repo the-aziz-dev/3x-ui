@@ -20,11 +20,18 @@ type updateUserForm struct {
 	NewPassword string `json:"newPassword" form:"newPassword"`
 }
 
+// bulkExtendForm represents the form for bulk extending client expiry times.
+type bulkExtendForm struct {
+	Days int `json:"days" form:"days"`
+}
+
 // SettingController handles settings and user management operations.
 type SettingController struct {
 	settingService service.SettingService
 	userService    service.UserService
 	panelService   service.PanelService
+	inboundService service.InboundService
+	xrayService    service.XrayService
 }
 
 // NewSettingController creates a new SettingController and initializes its routes.
@@ -44,6 +51,7 @@ func (a *SettingController) initRouter(g *gin.RouterGroup) {
 	g.POST("/updateUser", a.updateUser)
 	g.POST("/restartPanel", a.restartPanel)
 	g.GET("/getDefaultJsonConfig", a.getDefaultXrayConfig)
+	g.POST("/bulkExtendExpiry", a.bulkExtendExpiry)
 }
 
 // getAllSetting retrieves all current settings.
@@ -118,4 +126,25 @@ func (a *SettingController) getDefaultXrayConfig(c *gin.Context) {
 		return
 	}
 	jsonObj(c, defaultJsonConfig, nil)
+}
+
+// bulkExtendExpiry extends the expiry time of all time-limited clients by N days.
+func (a *SettingController) bulkExtendExpiry(c *gin.Context) {
+	form := &bulkExtendForm{}
+	err := c.ShouldBind(form)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.settings.toasts.bulkExtendExpiry"), err)
+		return
+	}
+	if form.Days <= 0 {
+		jsonMsg(c, I18nWeb(c, "pages.settings.toasts.bulkExtendExpiry"), errors.New("days must be greater than 0"))
+		return
+	}
+	affected, err := a.inboundService.BulkExtendClientExpiry(form.Days)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.settings.toasts.bulkExtendExpiry"), err)
+		return
+	}
+	a.xrayService.SetToNeedRestart()
+	jsonObj(c, affected, nil)
 }

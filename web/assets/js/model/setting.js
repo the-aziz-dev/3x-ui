@@ -77,6 +77,11 @@ class AllSetting {
         this.ldapDefaultExpiryDays = 0;
         this.ldapDefaultLimitIP = 0;
 
+        // Traffic multiplier settings
+        this.trafficMultiplierEnable = false;
+        this.trafficMultiplierValue = 1;
+        this.trafficMultiplierInboundTags = "";
+
         if (data == null) {
             return
         }

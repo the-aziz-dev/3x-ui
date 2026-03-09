@@ -120,6 +120,7 @@
       oldAllSetting: new AllSetting(),
       allSetting: new AllSetting(),
       saveBtnDisable: true,
+      bulkExtendDays: 10,
       entryHost: null,
       entryPort: null,
       entryProtocol: null,
@@ -436,6 +437,25 @@
         updatedNoises[index] = { ...updatedNoises[index], applyTo: value };
         this.noisesArray = updatedNoises;
       },
+      async bulkExtendExpiry() {
+        if (!this.bulkExtendDays || this.bulkExtendDays <= 0) return;
+        const self = this;
+        this.$confirm({
+          title: '{{ i18n "pages.settings.bulkExtendConfirmTitle" }}',
+          content: '{{ i18n "pages.settings.bulkExtendConfirmContent" }}'.replace('{}', this.bulkExtendDays),
+          class: themeSwitcher.currentTheme,
+          okText: '{{ i18n "sure" }}',
+          cancelText: '{{ i18n "cancel" }}',
+          onOk: async () => {
+            self.loading(true);
+            const msg = await HttpUtil.post("/panel/setting/bulkExtendExpiry", { days: self.bulkExtendDays });
+            self.loading(false);
+            if (msg.success) {
+              self.$message.success('{{ i18n "pages.settings.toasts.bulkExtendSuccess" }}'.replace('{}', msg.obj));
+            }
+          },
+        });
+      },
     },
     computed: {
       ldapInboundTagList: {
@@ -445,6 +465,15 @@
         },
         set: function (list) {
           this.allSetting.ldapInboundTags = Array.isArray(list) ? list.join(',') : '';
+        }
+      },
+      multiplierInboundTagList: {
+        get: function () {
+          const csv = this.allSetting.trafficMultiplierInboundTags || "";
+          return csv.length ? csv.split(',').map(s => s.trim()).filter(Boolean) : [];
+        },
+        set: function (list) {
+          this.allSetting.trafficMultiplierInboundTags = Array.isArray(list) ? list.join(',') : '';
         }
       },
       fragment: {

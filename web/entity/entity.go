@@ -104,6 +104,11 @@ type AllSetting struct {
 	LdapDefaultExpiryDays int    `json:"ldapDefaultExpiryDays" form:"ldapDefaultExpiryDays"`
 	LdapDefaultLimitIP    int    `json:"ldapDefaultLimitIP" form:"ldapDefaultLimitIP"`
 	// JSON subscription routing rules
+
+	// Traffic multiplier settings
+	TrafficMultiplierEnable      bool   `json:"trafficMultiplierEnable" form:"trafficMultiplierEnable"`
+	TrafficMultiplierValue       int    `json:"trafficMultiplierValue" form:"trafficMultiplierValue"`
+	TrafficMultiplierInboundTags string `json:"trafficMultiplierInboundTags" form:"trafficMultiplierInboundTags"`
 }
 
 // CheckValid validates all settings in the AllSetting struct, checking IP addresses, ports, SSL certificates, and other configuration values.
