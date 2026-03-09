@@ -2592,8 +2592,9 @@ func (s *InboundService) BulkExtendClientExpiry(days int) (int64, error) {
 	}()
 
 	addMs := int64(days) * 86400000
+	now := time.Now().Unix() * 1000
 
-	// 1. Update client_traffics: add days to all clients with positive expiry_time
+	// 1. Extend expiry_time for all clients with positive expiry_time (both active and expired)
 	result := tx.Model(xray.ClientTraffic{}).
 		Where("expiry_time > 0").
 		Update("expiry_time", gorm.Expr("expiry_time + ?", addMs))
@@ -2603,7 +2604,17 @@ func (s *InboundService) BulkExtendClientExpiry(days int) (int64, error) {
 	}
 	affected := result.RowsAffected
 
-	// 2. Update expiryTime inside inbound settings JSON for all affected clients
+	// 2. Re-enable clients whose new expiry_time is now in the future,
+	//    but only if they haven't exceeded their traffic limit
+	reEnableResult := tx.Model(xray.ClientTraffic{}).
+		Where("expiry_time > ? AND enable = ? AND (total = 0 OR up + down < total)", now, false).
+		Update("enable", true)
+	if reEnableResult.Error != nil {
+		err = reEnableResult.Error
+		return 0, err
+	}
+
+	// 3. Update expiryTime inside inbound settings JSON for all affected clients
 	var inbounds []*model.Inbound
 	err = tx.Model(model.Inbound{}).Find(&inbounds).Error
 	if err != nil {
@@ -2630,7 +2641,7 @@ func (s *InboundService) BulkExtendClientExpiry(days int) (int64, error) {
 				continue
 			}
 			c["expiryTime"] = expiry + float64(addMs)
-			c["updated_at"] = float64(time.Now().Unix() * 1000)
+			c["updated_at"] = float64(now)
 			clients[ci] = c
 			modified = true
 		}
@@ -2640,12 +2651,12 @@ func (s *InboundService) BulkExtendClientExpiry(days int) (int64, error) {
 			if jsonErr != nil {
 				continue
 			}
-			inbounds[i].Settings = string(newSettings)
+			// Only update the settings column for this specific inbound to avoid association issues
+			if updateErr := tx.Model(model.Inbound{}).Where("id = ?", inbounds[i].Id).Update("settings", string(newSettings)).Error; updateErr != nil {
+				err = updateErr
+				return 0, err
+			}
 		}
-	}
-	err = tx.Save(inbounds).Error
-	if err != nil {
-		return 0, err
 	}
 
 	return affected, nil
